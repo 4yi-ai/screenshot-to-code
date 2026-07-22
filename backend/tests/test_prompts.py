@@ -132,6 +132,7 @@ class TestCreatePrompt:
 
         assert "## Design system" in text
         assert "Reuse .mockup-frame" in text
+        assert "Extracting assets can be done with the extract_assets tool" in text
 
     def test_plan_update_with_history_without_file_state_uses_history_strategy(
         self,
@@ -251,6 +252,12 @@ class TestCreatePrompt:
         assert (
             "Image generation is disabled for this request. Do not call generate_images."
             in user_text
+        )
+        assert "Agent image tools are not available for this request" in user_text
+        assert "Do not call or print extract_assets" in user_text
+        assert (
+            "Extracting assets can be done with the extract_assets tool"
+            not in user_text
         )
 
     @pytest.mark.asyncio
