@@ -35,6 +35,10 @@ def create_provider_session(
         base_url = OPENAI_BASE_URL or openai_base_url
         if not api_key:
             raise Exception("Gateway API key (OPENAI_API_KEY) is missing.")
+        if not base_url:
+            # Never fall through to the AsyncOpenAI default (api.openai.com):
+            # that would send the per-org gateway token to OpenAI.
+            raise Exception("Gateway base URL (OPENAI_BASE_URL) is missing.")
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         return ChatCompletionsProviderSession(
             client=client,
