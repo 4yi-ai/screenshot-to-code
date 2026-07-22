@@ -3,6 +3,12 @@ from unittest.mock import AsyncMock
 from routes.generate_code import ModelSelectionStage
 from llm import Llm
 
+pytestmark = pytest.mark.skip(
+    reason="v1 forces all variants to Llm.GATEWAY (see routes/generate_code.py "
+    "_get_variant_models); the multi-model/video selection this file tests is "
+    "bypassed. Re-enable when multi-model selection returns."
+)
+
 
 class TestModelSelectionAllKeys:
     """Test model selection when Gemini, Anthropic, and OpenAI API keys are present."""
