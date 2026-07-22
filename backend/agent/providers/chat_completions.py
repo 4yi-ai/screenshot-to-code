@@ -1,8 +1,11 @@
-from typing import Any, List
+# pyright: reportUnknownVariableType=false
+import copy
+from typing import Any, List, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
+from agent.providers.anthropic.image import process_image
 from agent.providers.base import (
     EventSink,
     ExecutedToolCall,
@@ -12,10 +15,42 @@ from agent.providers.base import (
 )
 
 
+def _process_data_url_image(image_url: str) -> str:
+    if not image_url.startswith("data:image/") or ";base64," not in image_url:
+        return image_url
+
+    media_type, base64_data = process_image(image_url)
+    return f"data:{media_type};base64,{base64_data}"
+
+
+def _prepare_prompt_messages(
+    prompt_messages: List[ChatCompletionMessageParam],
+) -> List[ChatCompletionMessageParam]:
+    prepared_messages = copy.deepcopy(prompt_messages)
+    for message in prepared_messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            image_url = part.get("image_url")
+            if not isinstance(image_url, dict):
+                continue
+            url = cast(object, image_url.get("url"))
+            if isinstance(url, str):
+                image_url["url"] = _process_data_url_image(url)
+    return prepared_messages
+
+
 class ChatCompletionsProviderSession(ProviderSession):
     """OpenAI-compatible chat/completions session used to route generation through
     the 4yi gateway. v1 is tools-less: a single streaming vision call that returns
     raw HTML (recovered downstream by extract_html_content).
+
+    The gateway often routes to Bedrock Claude models, which reject images with
+    dimensions >= 8000 px. Native Anthropic calls already normalize screenshots;
+    the OpenAI-compatible gateway payload needs the same treatment.
     """
 
     def __init__(
@@ -27,11 +62,11 @@ class ChatCompletionsProviderSession(ProviderSession):
     ):
         self._client = client
         self._model_name = model_name
-        self._messages = prompt_messages
+        self._messages = _prepare_prompt_messages(prompt_messages)
         self._tools = tools
 
     async def stream_turn(self, on_event: EventSink) -> ProviderTurn:
-        kwargs: dict = {
+        kwargs: dict[str, Any] = {
             "model": self._model_name,
             "messages": self._messages,
             "stream": True,

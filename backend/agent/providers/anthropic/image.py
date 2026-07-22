@@ -74,10 +74,16 @@ def process_image_bytes(image_bytes: bytes, media_type: str) -> tuple[str, str]:
     if not is_under_dimension_limit:
         if img.width > img.height:
             new_width = CLAUDE_MAX_IMAGE_DIMENSION
-            new_height = int((CLAUDE_MAX_IMAGE_DIMENSION / img.width) * img.height)
+            new_height = max(
+                1,
+                int((CLAUDE_MAX_IMAGE_DIMENSION / img.width) * img.height),
+            )
         else:
             new_height = CLAUDE_MAX_IMAGE_DIMENSION
-            new_width = int((CLAUDE_MAX_IMAGE_DIMENSION / img.height) * img.width)
+            new_width = max(
+                1,
+                int((CLAUDE_MAX_IMAGE_DIMENSION / img.height) * img.width),
+            )
 
         img = img.resize((new_width, new_height), Image.DEFAULT_STRATEGY)
 
