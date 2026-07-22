@@ -12,6 +12,7 @@ from prompts.pipeline import build_prompt_messages
 from prompts.plan import derive_prompt_construction_plan
 from prompts.prompt_types import Stack
 
+
 # Type definitions for test structures
 class ExpectedResult(TypedDict):
     messages: List[ChatCompletionMessageParam]
@@ -57,7 +58,9 @@ def assert_structure_match(actual: object, expected: object, path: str = "") -> 
         actual_dict = cast(Dict[str, object], actual)
         for key, value in expected_dict.items():
             assert key in actual_dict, f"At {path}: key '{key}' not found in actual"
-            assert_structure_match(actual_dict[key], value, f"{path}.{key}" if path else key)
+            assert_structure_match(
+                actual_dict[key], value, f"{path}.{key}" if path else key
+            )
     elif isinstance(expected, list):
         assert isinstance(
             actual, list
@@ -130,7 +133,9 @@ class TestCreatePrompt:
         assert "## Design system" in text
         assert "Reuse .mockup-frame" in text
 
-    def test_plan_update_with_history_uses_history_strategy(self) -> None:
+    def test_plan_update_with_history_without_file_state_uses_history_strategy(
+        self,
+    ) -> None:
         plan = derive_prompt_construction_plan(
             stack=self.TEST_STACK,
             input_mode="image",
@@ -139,6 +144,16 @@ class TestCreatePrompt:
             file_state=None,
         )
         assert plan["construction_strategy"] == "update_from_history"
+
+    def test_plan_update_with_file_state_prefers_file_snapshot_strategy(self) -> None:
+        plan = derive_prompt_construction_plan(
+            stack=self.TEST_STACK,
+            input_mode="image",
+            generation_type="update",
+            history=[{"role": "user", "text": "change", "images": [], "videos": []}],
+            file_state={"path": "index.html", "content": "<html>current</html>"},
+        )
+        assert plan["construction_strategy"] == "update_from_file_snapshot"
 
     def test_plan_update_without_history_uses_file_snapshot_strategy(self) -> None:
         plan = derive_prompt_construction_plan(
@@ -233,8 +248,10 @@ class TestCreatePrompt:
         assert isinstance(text_part, dict)
         user_text = text_part.get("text")
         assert isinstance(user_text, str)
-        assert "Image generation is disabled for this request. Do not call generate_images." in user_text
-
+        assert (
+            "Image generation is disabled for this request. Do not call generate_images."
+            in user_text
+        )
 
     @pytest.mark.asyncio
     async def test_image_mode_update_with_history(self) -> None:
@@ -244,9 +261,24 @@ class TestCreatePrompt:
             "prompt": {"text": "", "images": [self.TEST_IMAGE_URL]},
             "generationType": "update",
             "history": [
-                {"role": "assistant", "text": "<html>Initial code</html>", "images": [], "videos": []},
-                {"role": "user", "text": "Make the background blue", "images": [], "videos": []},
-                {"role": "assistant", "text": "<html>Updated code</html>", "images": [], "videos": []},
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Make the background blue",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": "<html>Updated code</html>",
+                    "images": [],
+                    "videos": [],
+                },
                 {"role": "user", "text": "Add a header", "images": [], "videos": []},
             ],
         }
@@ -304,9 +336,24 @@ class TestCreatePrompt:
                 generation_type="update",
                 prompt={"text": "", "images": [self.TEST_IMAGE_URL], "videos": []},
                 history=[
-                    {"role": "assistant", "text": "<html>Initial code</html>", "images": [], "videos": []},
-                    {"role": "user", "text": "Make the background blue", "images": [], "videos": []},
-                    {"role": "assistant", "text": "<html>Updated code</html>", "images": [], "videos": []},
+                    {
+                        "role": "assistant",
+                        "text": "<html>Initial code</html>",
+                        "images": [],
+                        "videos": [],
+                    },
+                    {
+                        "role": "user",
+                        "text": "Make the background blue",
+                        "images": [],
+                        "videos": [],
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "<html>Updated code</html>",
+                        "images": [],
+                        "videos": [],
+                    },
                 ],
                 image_generation_enabled=False,
             )
@@ -318,7 +365,10 @@ class TestCreatePrompt:
         first_user_content = messages[2].get("content")
         assert isinstance(first_user_content, str)
         assert "Selected stack: html_tailwind." in first_user_content
-        assert "Image generation is disabled for this request. Do not call generate_images." in first_user_content
+        assert (
+            "Image generation is disabled for this request. Do not call generate_images."
+            in first_user_content
+        )
         assert "Make the background blue" in first_user_content
 
     @pytest.mark.asyncio
@@ -327,11 +377,8 @@ class TestCreatePrompt:
         # Setup test data
         text_description: str = "a modern landing page with hero section"
         params: Dict[str, Any] = {
-            "prompt": {
-                "text": text_description,
-                "images": []
-            },
-            "generationType": "create"
+            "prompt": {"text": text_description, "images": []},
+            "generationType": "create",
         }
         with patch(
             "prompts.system_prompt.SYSTEM_PROMPT",
@@ -345,21 +392,18 @@ class TestCreatePrompt:
                 prompt=params["prompt"],
                 history=params.get("history", []),
             )
-            
+
             # Define expected structure
             expected: ExpectedResult = {
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": self.MOCK_SYSTEM_PROMPT
-                    },
+                    {"role": "system", "content": self.MOCK_SYSTEM_PROMPT},
                     {
                         "role": "user",
-                        "content": f"<CONTAINS:Generate UI for {text_description}>"
-                    }
+                        "content": f"<CONTAINS:Generate UI for {text_description}>",
+                    },
                 ],
             }
-            
+
             # Assert the structure matches
             actual: ExpectedResult = {"messages": messages}
             assert_structure_match(actual, expected)
@@ -370,17 +414,29 @@ class TestCreatePrompt:
         # Setup test data
         text_description: str = "a dashboard with charts"
         params: Dict[str, Any] = {
-            "prompt": {
-                "text": text_description,
-                "images": []
-            },
+            "prompt": {"text": text_description, "images": []},
             "generationType": "update",
             "history": [
-                {"role": "assistant", "text": "<html>Initial dashboard</html>", "images": [], "videos": []},
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial dashboard</html>",
+                    "images": [],
+                    "videos": [],
+                },
                 {"role": "user", "text": "Add a sidebar", "images": [], "videos": []},
-                {"role": "assistant", "text": "<html>Dashboard with sidebar</html>", "images": [], "videos": []},
-                {"role": "user", "text": "Now add a navigation menu", "images": [], "videos": []},
-            ]
+                {
+                    "role": "assistant",
+                    "text": "<html>Dashboard with sidebar</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Now add a navigation menu",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
         }
         with patch(
             "prompts.system_prompt.SYSTEM_PROMPT",
@@ -394,7 +450,7 @@ class TestCreatePrompt:
                 prompt=params["prompt"],
                 history=params.get("history", []),
             )
-            
+
             # Define expected structure
             expected: ExpectedResult = {
                 "messages": [
@@ -404,7 +460,7 @@ class TestCreatePrompt:
                     },
                     {
                         "role": "assistant",
-                        "content": self.wrapped_file("<html>Initial dashboard</html>")
+                        "content": self.wrapped_file("<html>Initial dashboard</html>"),
                     },
                     {
                         "role": "user",
@@ -418,15 +474,12 @@ class TestCreatePrompt:
                         "role": "assistant",
                         "content": self.wrapped_file(
                             "<html>Dashboard with sidebar</html>"
-                        )
+                        ),
                     },
-                    {
-                        "role": "user",
-                        "content": "Now add a navigation menu"
-                    }
+                    {"role": "user", "content": "Now add a navigation menu"},
                 ],
             }
-            
+
             # Assert the structure matches
             actual: ExpectedResult = {"messages": messages}
             assert_structure_match(actual, expected)
@@ -447,7 +500,7 @@ class TestCreatePrompt:
                 "images": [],
                 "videos": [video_data_url],
             },
-            "generationType": "create"
+            "generationType": "create",
         }
 
         frame_data_urls = [
@@ -512,7 +565,6 @@ class TestCreatePrompt:
                 history=[],
             )
 
-
     @pytest.mark.asyncio
     async def test_image_mode_update_with_single_image_in_history(self) -> None:
         """Test update with user message containing a single image."""
@@ -522,10 +574,25 @@ class TestCreatePrompt:
             "prompt": {"text": "", "images": [self.TEST_IMAGE_URL]},
             "generationType": "update",
             "history": [
-                {"role": "assistant", "text": "<html>Initial code</html>", "images": [], "videos": []},
-                {"role": "user", "text": "Add a button", "images": [reference_image_url], "videos": []},
-                {"role": "assistant", "text": "<html>Code with button</html>", "images": [], "videos": []},
-            ]
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Add a button",
+                    "images": [reference_image_url],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": "<html>Code with button</html>",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
         }
 
         with patch(
@@ -593,10 +660,25 @@ class TestCreatePrompt:
             "prompt": {"text": "", "images": [self.TEST_IMAGE_URL]},
             "generationType": "update",
             "history": [
-                {"role": "assistant", "text": "<html>Initial code</html>", "images": [], "videos": []},
-                {"role": "user", "text": "Style like these examples", "images": [example1_url, example2_url], "videos": []},
-                {"role": "assistant", "text": "<html>Styled code</html>", "images": [], "videos": []},
-            ]
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "user",
+                    "text": "Style like these examples",
+                    "images": [example1_url, example2_url],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": "<html>Styled code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
         }
 
         with patch(
@@ -669,10 +751,20 @@ class TestCreatePrompt:
             "prompt": {"text": "", "images": [self.TEST_IMAGE_URL]},
             "generationType": "update",
             "history": [
-                {"role": "assistant", "text": "<html>Initial code</html>", "images": [], "videos": []},
+                {
+                    "role": "assistant",
+                    "text": "<html>Initial code</html>",
+                    "images": [],
+                    "videos": [],
+                },
                 {"role": "user", "text": "Make it blue", "images": [], "videos": []},
-                {"role": "assistant", "text": "<html>Blue code</html>", "images": [], "videos": []},
-            ]
+                {
+                    "role": "assistant",
+                    "text": "<html>Blue code</html>",
+                    "images": [],
+                    "videos": [],
+                },
+            ],
         }
 
         with patch(
@@ -719,12 +811,18 @@ class TestCreatePrompt:
             assert_structure_match(actual, expected)
 
     @pytest.mark.asyncio
-    async def test_update_bootstraps_from_file_state_when_history_is_empty(self) -> None:
+    async def test_update_bootstraps_from_file_state_when_history_is_empty(
+        self,
+    ) -> None:
         """Update should synthesize a user message from fileState + prompt when history is empty."""
         ref_image_url: str = "data:image/png;base64,ref_image"
         params: Dict[str, Any] = {
             "generationType": "update",
-            "prompt": {"text": "Make the header blue", "images": [ref_image_url], "videos": []},
+            "prompt": {
+                "text": "Make the header blue",
+                "images": [ref_image_url],
+                "videos": [],
+            },
             "history": [],
             "fileState": {
                 "path": "index.html",
@@ -763,7 +861,7 @@ class TestCreatePrompt:
                             },
                             {
                                 "type": "text",
-                                "text": "<CONTAINS:<current_file path=\"index.html\">>",
+                                "text": '<CONTAINS:<current_file path="index.html">>',
                             },
                         ],
                     },
@@ -775,7 +873,11 @@ class TestCreatePrompt:
             user_content = messages[1].get("content")
             assert isinstance(user_content, list)
             text_part = next(
-                (part for part in user_content if isinstance(part, dict) and part.get("type") == "text"),
+                (
+                    part
+                    for part in user_content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ),
                 None,
             )
             assert isinstance(text_part, dict)
@@ -785,6 +887,52 @@ class TestCreatePrompt:
             assert "<html>Original imported code</html>" in synthesized_text
             assert "<change_request>" in synthesized_text
             assert "Make the header blue" in synthesized_text
+
+    @pytest.mark.asyncio
+    async def test_update_prefers_file_state_over_history(self) -> None:
+        params: Dict[str, Any] = {
+            "generationType": "update",
+            "prompt": {"text": "Make the menu interactive", "images": [], "videos": []},
+            "history": [
+                {
+                    "role": "user",
+                    "text": "Original request",
+                    "images": [],
+                    "videos": [],
+                },
+                {
+                    "role": "assistant",
+                    "text": 'generate_images({"prompts":["bad history"]})',
+                    "images": [],
+                    "videos": [],
+                },
+            ],
+            "fileState": {
+                "path": "index.html",
+                "content": "<!DOCTYPE html><html><body>Current code</body></html>",
+            },
+        }
+
+        with patch(
+            "prompts.system_prompt.SYSTEM_PROMPT",
+            new=self.MOCK_SYSTEM_PROMPT,
+        ):
+            messages = await build_prompt_messages(
+                stack=self.TEST_STACK,
+                input_mode="text",
+                generation_type=params["generationType"],
+                prompt=params["prompt"],
+                history=params["history"],
+                file_state=params["fileState"],
+            )
+
+        assert len(messages) == 2
+        user_content = messages[1].get("content")
+        assert isinstance(user_content, str)
+        assert '<current_file path="index.html">' in user_content
+        assert "Current code" in user_content
+        assert "Make the menu interactive" in user_content
+        assert "bad history" not in user_content
 
     @pytest.mark.asyncio
     async def test_update_requires_history_or_file_state(self) -> None:

@@ -2,6 +2,7 @@
 import copy
 from typing import Any, List, cast
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -65,6 +66,16 @@ class ChatCompletionsProviderSession(ProviderSession):
         self._messages = _prepare_prompt_messages(prompt_messages)
         self._tools = tools
 
+    async def _complete_without_stream(self, kwargs: dict[str, Any]) -> str:
+        retry_kwargs = {**kwargs, "stream": False}
+        response = await self._client.chat.completions.create(**retry_kwargs)
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return ""
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        return content if isinstance(content, str) else ""
+
     async def stream_turn(self, on_event: EventSink) -> ProviderTurn:
         kwargs: dict[str, Any] = {
             "model": self._model_name,
@@ -76,18 +87,24 @@ class ChatCompletionsProviderSession(ProviderSession):
         if self._tools:
             kwargs["tools"] = self._tools
 
-        stream = await self._client.chat.completions.create(**kwargs)
-
         text = ""
-        async for chunk in stream:
-            choices = getattr(chunk, "choices", None) or []
-            if not choices:
-                continue
-            delta = choices[0].delta
-            piece = getattr(delta, "content", None)
-            if piece:
-                text += piece
-                await on_event(StreamEvent(type="assistant_delta", text=piece))
+        try:
+            stream = await self._client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                delta = choices[0].delta
+                piece = getattr(delta, "content", None)
+                if piece:
+                    text += piece
+                    await on_event(StreamEvent(type="assistant_delta", text=piece))
+        except httpx.RemoteProtocolError as exc:
+            print(
+                "[gateway] streaming response ended early; retrying without stream",
+                exc,
+            )
+            text = await self._complete_without_stream(kwargs)
 
         return ProviderTurn(assistant_text=text, tool_calls=[], assistant_turn=None)
 

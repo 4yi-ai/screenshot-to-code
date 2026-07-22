@@ -2,7 +2,6 @@ import asyncio
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 import traceback
-from typing import Callable, Awaitable
 from fastapi import APIRouter, WebSocket
 import openai
 from starlette.websockets import WebSocketDisconnect
@@ -24,6 +23,7 @@ from llm import (
 )
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Coroutine,
     Dict,
@@ -80,19 +80,47 @@ from ws.constants import APP_ERROR_WEB_SOCKET_CODE  # type: ignore
 router = APIRouter()
 
 
+def _empty_params() -> Dict[str, Any]:
+    return {}
+
+
+def _empty_prompt_messages() -> List[ChatCompletionMessageParam]:
+    return []
+
+
+def _empty_variant_models() -> List[Llm]:
+    return []
+
+
+def _empty_completions() -> List[str]:
+    return []
+
+
+def _empty_variant_completions() -> Dict[int, str]:
+    return {}
+
+
+def _empty_metadata() -> Dict[str, Any]:
+    return {}
+
+
 @dataclass
 class PipelineContext:
     """Context object that carries state through the pipeline"""
 
     websocket: WebSocket
     ws_comm: "WebSocketCommunicator | None" = None
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=_empty_params)
     extracted_params: "ExtractedParams | None" = None
-    prompt_messages: List[ChatCompletionMessageParam] = field(default_factory=list)
-    variant_models: List[Llm] = field(default_factory=list)
-    completions: List[str] = field(default_factory=list)
-    variant_completions: Dict[int, str] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    prompt_messages: List[ChatCompletionMessageParam] = field(
+        default_factory=_empty_prompt_messages
+    )
+    variant_models: List[Llm] = field(default_factory=_empty_variant_models)
+    completions: List[str] = field(default_factory=_empty_completions)
+    variant_completions: Dict[int, str] = field(
+        default_factory=_empty_variant_completions
+    )
+    metadata: Dict[str, Any] = field(default_factory=_empty_metadata)
 
     @property
     def send_message(self):
@@ -321,8 +349,10 @@ class ParameterExtractionStage:
         if not openai_base_url:
             print("Using official OpenAI URL")
 
-        # Feature preferences default to enabled for older clients.
-        should_generate_images = bool(params.get("isImageGenerationEnabled", True))
+        # Feature preferences default to enabled for older clients. The v1 4yi
+        # gateway path is tools-less, so do not advertise image-generation tools
+        # that the model cannot actually call.
+        should_generate_images = False
         should_extract_assets = bool(params.get("isAssetExtractionEnabled", True))
 
         # Extract and validate generation type
@@ -347,15 +377,21 @@ class ParameterExtractionStage:
         raw_file_state = params.get("fileState")
         file_state: Dict[str, str] | None = None
         if isinstance(raw_file_state, dict):
-            content = raw_file_state.get("content")
+            file_state_payload = cast(Dict[str, object], raw_file_state)
+            content = file_state_payload.get("content")
             if isinstance(content, str) and content.strip():
-                path = raw_file_state.get("path") or "index.html"
+                raw_path = file_state_payload.get("path")
+                path = (
+                    raw_path
+                    if isinstance(raw_path, str) and raw_path.strip()
+                    else "index.html"
+                )
                 file_state = {"path": path, "content": content}
 
         raw_option_codes = params.get("optionCodes")
         option_codes: List[str] = []
         if isinstance(raw_option_codes, list):
-            for entry in raw_option_codes:
+            for entry in cast(List[object], raw_option_codes):
                 if isinstance(entry, str):
                     option_codes.append(entry)
                 elif entry is None:
@@ -551,7 +587,10 @@ class AgenticGenerationStage:
 
     def __init__(
         self,
-        send_message: Callable[[MessageType, str | None, int, Dict[str, Any] | None, str | None], Coroutine[Any, Any, None]],
+        send_message: Callable[
+            [MessageType, str | None, int, Dict[str, Any] | None, str | None],
+            Coroutine[Any, Any, None],
+        ],
         openai_api_key: str | None,
         openai_base_url: str | None,
         anthropic_api_key: str | None,
@@ -583,9 +622,7 @@ class AgenticGenerationStage:
         tasks: List[asyncio.Task[str]] = []
         for index, model in enumerate(variant_models):
             tasks.append(
-                asyncio.create_task(
-                    self._run_variant(index, model, prompt_messages)
-                )
+                asyncio.create_task(self._run_variant(index, model, prompt_messages))
             )
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -606,6 +643,7 @@ class AgenticGenerationStage:
         prompt_messages: List[ChatCompletionMessageParam],
     ) -> str:
         try:
+
             async def send_runner_message(
                 type: str,
                 value: str | None,
@@ -855,9 +893,7 @@ class PostProcessingMiddleware(Middleware):
         self, context: PipelineContext, next_func: Callable[[], Awaitable[None]]
     ) -> None:
         post_processor = PostProcessingStage()
-        await post_processor.process_completions(
-            context.completions, context.websocket
-        )
+        await post_processor.process_completions(context.completions, context.websocket)
 
         await next_func()
 

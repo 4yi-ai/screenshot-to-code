@@ -14,10 +14,10 @@ def derive_prompt_construction_plan(
     file_state: dict[str, str] | None,
 ) -> PromptConstructionPlan:
     if generation_type == "update":
-        if len(history) > 0:
-            strategy = "update_from_history"
-        elif file_state and file_state.get("content", "").strip():
+        if file_state and file_state.get("content", "").strip():
             strategy = "update_from_file_snapshot"
+        elif len(history) > 0:
+            strategy = "update_from_history"
         else:
             raise ValueError("Update requests require history or fileState.content")
         return {

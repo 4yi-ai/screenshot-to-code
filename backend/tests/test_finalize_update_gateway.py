@@ -84,6 +84,32 @@ async def test_tools_less_path_falls_back_to_seed_when_model_returns_nothing() -
 
 
 @pytest.mark.asyncio
+async def test_tools_less_update_keeps_seed_when_model_returns_non_html() -> None:
+    engine = _make_engine(
+        stream_text_as_code=True,
+        initial_file_state={
+            "path": "index.html",
+            "content": "<!DOCTYPE html><html><body>old</body></html>",
+        },
+    )
+
+    result = await engine._finalize_response("generate_images({})")
+
+    assert result == "<!DOCTYPE html><html><body>old</body></html>"
+    assert engine.file_state.content == "<!DOCTYPE html><html><body>old</body></html>"
+
+
+@pytest.mark.asyncio
+async def test_tools_less_create_returns_empty_when_model_returns_non_html() -> None:
+    engine = _make_engine(stream_text_as_code=True, initial_file_state=None)
+
+    result = await engine._finalize_response("I need more information.")
+
+    assert result == ""
+    assert engine.file_state.content == ""
+
+
+@pytest.mark.asyncio
 async def test_non_tools_less_path_behavior_unchanged_prefers_seeded_content() -> None:
     """The non-tools-less (tool-calling) path must keep its exact current
     behavior: if file_state.content is already seeded, it wins regardless of

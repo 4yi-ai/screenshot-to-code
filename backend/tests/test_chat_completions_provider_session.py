@@ -3,6 +3,7 @@ import base64
 import io
 from typing import Any, cast
 
+import httpx
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
@@ -39,14 +40,35 @@ class _Chunk:
         self.choices = [] if empty else [_Choice(content)]
 
 
+class _Message:
+    def __init__(self, content):
+        self.content = content
+
+
+class _ResponseChoice:
+    def __init__(self, content):
+        self.message = _Message(content)
+
+
+class _Response:
+    def __init__(self, content):
+        self.choices = [_ResponseChoice(content)]
+
+
 class _Stream:
-    def __init__(self, chunks):
+    def __init__(self, chunks, *, fail: bool = False):
         self._it = iter(chunks)
+        self._fail = fail
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        if self._fail:
+            self._fail = False
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body"
+            )
         try:
             return next(self._it)
         except StopIteration:
@@ -54,23 +76,57 @@ class _Stream:
 
 
 class _Completions:
-    def __init__(self, chunks):
+    def __init__(
+        self,
+        chunks,
+        *,
+        fallback_content: str = "",
+        fail_stream_once: bool = False,
+    ):
         self._chunks = chunks
+        self._fallback_content = fallback_content
+        self._fail_stream_once = fail_stream_once
         self.kwargs: dict[str, Any] | None = None
+        self.calls: list[dict[str, Any]] = []
 
     async def create(self, **kwargs):
         self.kwargs = kwargs
-        return _Stream(self._chunks)
+        self.calls.append(kwargs)
+        if kwargs.get("stream") is False:
+            return _Response(self._fallback_content)
+        fail = self._fail_stream_once
+        self._fail_stream_once = False
+        return _Stream(self._chunks, fail=fail)
 
 
 class _Chat:
-    def __init__(self, chunks):
-        self.completions = _Completions(chunks)
+    def __init__(
+        self,
+        chunks,
+        *,
+        fallback_content: str = "",
+        fail_stream_once: bool = False,
+    ):
+        self.completions = _Completions(
+            chunks,
+            fallback_content=fallback_content,
+            fail_stream_once=fail_stream_once,
+        )
 
 
 class _Client:
-    def __init__(self, chunks):
-        self.chat = _Chat(chunks)
+    def __init__(
+        self,
+        chunks,
+        *,
+        fallback_content: str = "",
+        fail_stream_once: bool = False,
+    ):
+        self.chat = _Chat(
+            chunks,
+            fallback_content=fallback_content,
+            fail_stream_once=fail_stream_once,
+        )
 
 
 def _captured_kwargs(client: _Client) -> dict[str, Any]:
@@ -184,6 +240,28 @@ async def test_keeps_remote_image_urls_unchanged_for_gateway():
     messages = cast(list[dict[str, Any]], _captured_kwargs(client)["messages"])
     sent_image_url = messages[0]["content"][0]["image_url"]["url"]
     assert sent_image_url == remote_url
+
+
+async def test_retries_non_streaming_when_gateway_stream_closes_early():
+    fallback_html = "<!DOCTYPE html><html><body><h1>Updated</h1></body></html>"
+    client = _Client(
+        [_Chunk("partial")],
+        fallback_content=fallback_html,
+        fail_stream_once=True,
+    )
+    session = ChatCompletionsProviderSession(
+        client=cast(AsyncOpenAI, client),
+        model_name="m",
+        prompt_messages=[{"role": "user", "content": "u"}],
+        tools=[],
+    )
+    events = []
+
+    turn = await session.stream_turn(lambda e: events.append(e) or _noop())
+
+    assert turn.assistant_text == fallback_html
+    assert events == []
+    assert [call["stream"] for call in client.chat.completions.calls] == [True, False]
 
 
 async def _noop():

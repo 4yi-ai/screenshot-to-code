@@ -54,11 +54,15 @@ def _probe_duration(video_path: str) -> float:
     return (int(hours) * 3600) + (int(minutes) * 60) + float(seconds)
 
 
+MAX_VIDEO_PROMPT_FRAMES = 20
+DEFAULT_VIDEO_PROMPT_FRAMES = 20
+
+
 def _frame_times(duration: float, count: int) -> list[float]:
     if not duration or duration <= 0:
         return [0.1]
 
-    frame_count = max(1, min(count, 8))
+    frame_count = max(1, min(count, MAX_VIDEO_PROMPT_FRAMES))
     if frame_count == 1:
         return [min(max(duration * 0.5, 0.05), max(duration - 0.05, 0))]
 
@@ -136,8 +140,13 @@ def _extract_frame_jpeg(video_path: str, time_seconds: float) -> bytes:
     raise ValueError(last_error or f"ffmpeg produced no frame at {seek_time}s")
 
 
-def _extract_fallback_frames(video_path: str, frame_count: int) -> list[str]:
-    capped_frame_count = max(1, min(frame_count, 8))
+def _extract_fallback_frames(
+    video_path: str, frame_count: int, duration: float
+) -> list[str]:
+    capped_frame_count = max(1, min(frame_count, MAX_VIDEO_PROMPT_FRAMES))
+    fps = capped_frame_count
+    if duration > 0:
+        fps = max(capped_frame_count / duration, 0.1)
     with tempfile.TemporaryDirectory() as frame_dir:
         output_pattern = str(Path(frame_dir) / "frame-%03d.jpg")
         proc = subprocess.run(
@@ -149,7 +158,7 @@ def _extract_fallback_frames(video_path: str, frame_count: int) -> list[str]:
                 "-i",
                 video_path,
                 "-vf",
-                f"fps={capped_frame_count}",
+                f"fps={fps:.6f}",
                 "-frames:v",
                 str(capped_frame_count),
                 output_pattern,
@@ -173,7 +182,10 @@ def _video_to_frame_data_urls(video_data_url: str) -> list[str]:
     if not video_data_url.startswith("data:video/"):
         return [video_data_url]
 
-    frame_count = int(os.environ.get("VIDEO_PROMPT_FRAME_COUNT", "4") or "4")
+    frame_count = int(
+        os.environ.get("VIDEO_PROMPT_FRAME_COUNT", str(DEFAULT_VIDEO_PROMPT_FRAMES))
+        or str(DEFAULT_VIDEO_PROMPT_FRAMES)
+    )
     suffix = _video_suffix(video_data_url)
     frame_urls: list[str] = []
     with tempfile.NamedTemporaryFile(suffix=suffix) as video_file:
@@ -187,7 +199,11 @@ def _video_to_frame_data_urls(video_data_url: str) -> list[str]:
             except Exception as exc:
                 print(f"[video_prompt] skipping unreadable frame at {time:.3f}s: {exc}")
         if not frame_urls:
-            frame_urls = _extract_fallback_frames(video_file.name, frame_count)
+            frame_urls = _extract_fallback_frames(
+                video_file.name,
+                frame_count,
+                duration,
+            )
 
     if not frame_urls:
         raise ValueError("Unable to extract image frames from uploaded video")
