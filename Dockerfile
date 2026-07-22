@@ -12,7 +12,7 @@ RUN pnpm build
 FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN pip install --no-cache-dir "poetry==1.8.0"
+RUN pip install --no-cache-dir "poetry==2.4.1"
 COPY backend/pyproject.toml backend/poetry.lock ./
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root
