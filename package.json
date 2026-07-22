@@ -1,5 +1,6 @@
 {
   "name": "screenshot-to-code",
+  "description": "Turn any UI screenshot into clean, self-contained HTML + Tailwind in seconds — powered by Claude vision. Prototype faster, rebuild any design, and go from image to working code in one step.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
