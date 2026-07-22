@@ -282,6 +282,14 @@ class AgentEngine:
             await session.close()
 
     async def _finalize_response(self, assistant_text: str) -> str:
+        if self._stream_text_as_code:
+            html = extract_html_content(assistant_text)
+            if html:
+                self.file_state.content = html
+                await self._send("setCode", html)
+                return html
+            return self.file_state.content
+
         if self.file_state.content:
             return self.file_state.content
 
