@@ -53,3 +53,19 @@ app.include_router(evals.router)
 app.include_router(export.router)
 app.include_router(design_systems.router)
 app.include_router(prompt_reports.router)
+
+# --- 4yi single-container serving ---
+import os
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    return JSONResponse({"ok": True})
+
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_STATIC_DIR):
+    # Registered last so all API/WS/healthz routes win over the SPA catch-all.
+    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="spa")
