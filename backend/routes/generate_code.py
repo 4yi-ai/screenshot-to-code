@@ -456,6 +456,9 @@ class ModelSelectionStage:
     ) -> List[Llm]:
         """Simple model cycling that scales with num_variants"""
 
+        # v1: all generation is routed through the 4yi gateway (Claude 4.6).
+        return [Llm.GATEWAY] * num_variants
+
         # Video mode requires Gemini - 2 variants for comparison
         if input_mode == "video":
             if not gemini_api_key:
