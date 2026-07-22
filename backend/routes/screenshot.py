@@ -1,4 +1,5 @@
 import base64
+import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
@@ -42,6 +43,23 @@ def bytes_to_data_url(image_bytes: bytes, mime_type: str) -> str:
     return f"data:{mime_type};base64,{base64_image}"
 
 
+def resolve_screenshot_api_key(request_api_key: str | None) -> str:
+    api_key = (
+        (request_api_key or "").strip()
+        or (os.environ.get("SCREENSHOTONE_API_KEY") or "").strip()
+        or (os.environ.get("SCREENSHOT_ONE_API_KEY") or "").strip()
+    )
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ScreenshotOne API key is not configured. Set "
+                "SCREENSHOTONE_API_KEY on the backend or add a key in Settings."
+            ),
+        )
+    return api_key
+
+
 async def capture_screenshot(
     target_url: str, api_key: str, device: str = "desktop"
 ) -> bytes:
@@ -75,7 +93,7 @@ async def capture_screenshot(
 
 class ScreenshotRequest(BaseModel):
     url: str
-    apiKey: str
+    apiKey: str | None = None
 
 
 class ScreenshotResponse(BaseModel):
@@ -86,7 +104,7 @@ class ScreenshotResponse(BaseModel):
 async def app_screenshot(request: ScreenshotRequest):
     # Extract the URL from the request body
     url = request.url
-    api_key = request.apiKey
+    api_key = resolve_screenshot_api_key(request.apiKey)
 
     try:
         # Normalize the URL

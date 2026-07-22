@@ -1,5 +1,8 @@
 import pytest
-from routes.screenshot import normalize_url
+from fastapi import HTTPException
+
+from routes import screenshot
+from routes.screenshot import ScreenshotRequest, app_screenshot, normalize_url, resolve_screenshot_api_key
 
 
 class TestNormalizeUrl:
@@ -57,3 +60,55 @@ class TestNormalizeUrl:
         assert normalize_url("example.com/path/to/page.html#section") == "https://example.com/path/to/page.html#section"
         assert normalize_url("user:pass@example.com") == "https://user:pass@example.com"
         assert normalize_url("example.com?q=search&lang=en") == "https://example.com?q=search&lang=en"
+
+
+class TestScreenshotApiKey:
+    def test_request_key_wins(self, monkeypatch):
+        monkeypatch.setenv("SCREENSHOTONE_API_KEY", "server-key")
+
+        assert resolve_screenshot_api_key(" browser-key ") == "browser-key"
+
+    def test_env_key_used_when_request_key_missing(self, monkeypatch):
+        monkeypatch.setenv("SCREENSHOTONE_API_KEY", " server-key ")
+
+        assert resolve_screenshot_api_key(None) == "server-key"
+        assert resolve_screenshot_api_key("") == "server-key"
+
+    def test_alternate_env_key_name_supported(self, monkeypatch):
+        monkeypatch.delenv("SCREENSHOTONE_API_KEY", raising=False)
+        monkeypatch.setenv("SCREENSHOT_ONE_API_KEY", "server-key")
+
+        assert resolve_screenshot_api_key(None) == "server-key"
+
+    def test_missing_key_raises_clear_400(self, monkeypatch):
+        monkeypatch.delenv("SCREENSHOTONE_API_KEY", raising=False)
+        monkeypatch.delenv("SCREENSHOT_ONE_API_KEY", raising=False)
+
+        with pytest.raises(HTTPException) as exc:
+            resolve_screenshot_api_key(None)
+
+        assert exc.value.status_code == 400
+        assert "ScreenshotOne API key is not configured" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_app_screenshot_uses_backend_key_when_body_key_is_missing(monkeypatch):
+    captured = {}
+
+    async def fake_capture_screenshot(target_url: str, api_key: str, device: str = "desktop") -> bytes:
+        captured["target_url"] = target_url
+        captured["api_key"] = api_key
+        captured["device"] = device
+        return b"fake-png"
+
+    monkeypatch.setenv("SCREENSHOTONE_API_KEY", "server-key")
+    monkeypatch.setattr(screenshot, "capture_screenshot", fake_capture_screenshot)
+
+    response = await app_screenshot(ScreenshotRequest(url="example.com"))
+
+    assert captured == {
+        "target_url": "https://example.com",
+        "api_key": "server-key",
+        "device": "desktop",
+    }
+    assert response.url == "data:image/png;base64,ZmFrZS1wbmc="
