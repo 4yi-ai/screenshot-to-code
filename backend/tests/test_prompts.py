@@ -53,8 +53,8 @@ def assert_structure_match(actual: object, expected: object, path: str = "") -> 
         assert isinstance(
             actual, dict
         ), f"At {path}: expected dict, got {type(actual).__name__}"
-        expected_dict: Dict[str, object] = expected
-        actual_dict: Dict[str, object] = actual
+        expected_dict = cast(Dict[str, object], expected)
+        actual_dict = cast(Dict[str, object], actual)
         for key, value in expected_dict.items():
             assert key in actual_dict, f"At {path}: key '{key}' not found in actual"
             assert_structure_match(actual_dict[key], value, f"{path}.{key}" if path else key)
@@ -62,8 +62,8 @@ def assert_structure_match(actual: object, expected: object, path: str = "") -> 
         assert isinstance(
             actual, list
         ), f"At {path}: expected list, got {type(actual).__name__}"
-        expected_list: List[object] = expected
-        actual_list: List[object] = actual
+        expected_list = cast(List[object], expected)
+        actual_list = cast(List[object], actual)
         assert len(actual_list) == len(
             expected_list
         ), f"At {path}: list length mismatch (expected {len(expected_list)}, got {len(actual_list)})"
@@ -450,14 +450,21 @@ class TestCreatePrompt:
             "generationType": "create"
         }
 
-        # Call the function
-        messages = await build_prompt_messages(
-            stack=self.TEST_STACK,
-            input_mode="video",
-            generation_type=params["generationType"],
-            prompt=params["prompt"],
-            history=params.get("history", []),
-        )
+        frame_data_urls = [
+            "data:image/jpeg;base64,frame_1",
+            "data:image/jpeg;base64,frame_2",
+        ]
+        with patch(
+            "prompts.create.video._video_to_frame_data_urls",
+            return_value=frame_data_urls,
+        ):
+            messages = await build_prompt_messages(
+                stack=self.TEST_STACK,
+                input_mode="video",
+                generation_type=params["generationType"],
+                prompt=params["prompt"],
+                history=params.get("history", []),
+            )
 
         expected: ExpectedResult = {
             "messages": [
@@ -470,11 +477,15 @@ class TestCreatePrompt:
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": {"url": video_data_url, "detail": "high"},
+                            "image_url": {"url": frame_data_urls[0], "detail": "high"},
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": frame_data_urls[1], "detail": "high"},
                         },
                         {
                             "type": "text",
-                            "text": "<CONTAINS:Analyze this video and generate the code.>",
+                            "text": "<CONTAINS:Analyze these frames and generate the code.>",
                         },
                     ],
                 },

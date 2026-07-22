@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
-from playwright.async_api import async_playwright
+from playwright.async_api import ViewportSize, async_playwright
 from urllib.parse import urlparse
 
 router = APIRouter()
@@ -15,27 +15,29 @@ def normalize_url(url: str) -> str:
     If no protocol is specified, default to https://
     """
     url = url.strip()
-    
+
     # Parse the URL
     parsed = urlparse(url)
-    
+
     # Check if we have a scheme
     if not parsed.scheme:
         # No scheme, add https://
         url = f"https://{url}"
-    elif parsed.scheme in ['http', 'https']:
+    elif parsed.scheme in ["http", "https"]:
         # Valid scheme, keep as is
         pass
     else:
         # Check if this might be a domain with port (like example.com:8080)
         # urlparse treats this as scheme:netloc, but we want to handle it as domain:port
-        if ':' in url and not url.startswith(('http://', 'https://', 'ftp://', 'file://')):
+        if ":" in url and not url.startswith(
+            ("http://", "https://", "ftp://", "file://")
+        ):
             # Likely a domain:port without protocol
             url = f"https://{url}"
         else:
             # Invalid protocol
             raise ValueError(f"Unsupported protocol: {parsed.scheme}")
-    
+
     return url
 
 
@@ -84,7 +86,7 @@ async def capture_screenshot_with_screenshotone(
             raise Exception("Error taking screenshot")
 
 
-def viewport_for_device(device: str) -> dict[str, int]:
+def viewport_for_device(device: str) -> ViewportSize:
     if device == "desktop":
         return {"width": 1280, "height": 832}
     return {"width": 342, "height": 684}
@@ -141,7 +143,7 @@ async def app_screenshot(request: ScreenshotRequest):
     try:
         # Normalize the URL
         normalized_url = normalize_url(url)
-        
+
         # Capture screenshot with normalized URL
         image_bytes = await capture_screenshot(normalized_url, api_key=api_key)
 
