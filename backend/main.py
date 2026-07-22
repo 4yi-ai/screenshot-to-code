@@ -11,7 +11,6 @@ from routes import (
     screenshot,
     generate_code,
     home,
-    evals,
     export,
     design_systems,
     prompt_reports,
@@ -49,7 +48,6 @@ app.add_middleware(
 app.include_router(generate_code.router)
 app.include_router(screenshot.router)
 app.include_router(home.router)
-app.include_router(evals.router)
 app.include_router(export.router)
 app.include_router(design_systems.router)
 app.include_router(prompt_reports.router)
