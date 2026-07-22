@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
+from playwright.async_api import async_playwright
 from urllib.parse import urlparse
 
 router = APIRouter()
@@ -43,24 +44,16 @@ def bytes_to_data_url(image_bytes: bytes, mime_type: str) -> str:
     return f"data:{mime_type};base64,{base64_image}"
 
 
-def resolve_screenshot_api_key(request_api_key: str | None) -> str:
-    api_key = (
+def resolve_screenshot_api_key(request_api_key: str | None) -> str | None:
+    return (
         (request_api_key or "").strip()
         or (os.environ.get("SCREENSHOTONE_API_KEY") or "").strip()
         or (os.environ.get("SCREENSHOT_ONE_API_KEY") or "").strip()
+        or None
     )
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ScreenshotOne API key is not configured. Set "
-                "SCREENSHOTONE_API_KEY on the backend or add a key in Settings."
-            ),
-        )
-    return api_key
 
 
-async def capture_screenshot(
+async def capture_screenshot_with_screenshotone(
     target_url: str, api_key: str, device: str = "desktop"
 ) -> bytes:
     api_base_url = "https://api.screenshotone.com/take"
@@ -89,6 +82,45 @@ async def capture_screenshot(
             return response.content
         else:
             raise Exception("Error taking screenshot")
+
+
+def viewport_for_device(device: str) -> dict[str, int]:
+    if device == "desktop":
+        return {"width": 1280, "height": 832}
+    return {"width": 342, "height": 684}
+
+
+async def capture_screenshot_locally(target_url: str, device: str = "desktop") -> bytes:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        try:
+            page = await browser.new_page(viewport=viewport_for_device(device))
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=45_000)
+            await page.wait_for_timeout(1_000)
+            return await page.screenshot(type="png", full_page=True)
+        finally:
+            await browser.close()
+
+
+async def capture_screenshot(
+    target_url: str, api_key: str | None, device: str = "desktop"
+) -> bytes:
+    if api_key:
+        return await capture_screenshot_with_screenshotone(
+            target_url,
+            api_key=api_key,
+            device=device,
+        )
+    try:
+        return await capture_screenshot_locally(target_url, device=device)
+    except Exception as exc:
+        raise Exception(
+            "Local browser screenshot failed. Install Chromium with "
+            "`python -m playwright install chromium` or configure "
+            "SCREENSHOTONE_API_KEY on the backend."
+        ) from exc
 
 
 class ScreenshotRequest(BaseModel):

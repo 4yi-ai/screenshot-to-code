@@ -337,8 +337,8 @@ function SettingsTab({ settings, setSettings, appTheme, setAppTheme }: Props) {
             </div>
             <div className="p-4">
               <p className="text-xs text-gray-500 dark:text-zinc-400">
-                URL capture uses the backend ScreenshotOne key when configured.
-                Add your own key here only if you want to override it.{" "}
+                URL capture uses the backend browser by default. Add a
+                ScreenshotOne key here only if you want to override it.{" "}
                 <a
                   href="https://screenshotone.com?via=screenshot-to-code"
                   className="text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"

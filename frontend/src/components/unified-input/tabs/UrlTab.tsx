@@ -204,7 +204,7 @@ function UrlTab({
           </div>
 
           <p className="text-xs text-gray-400 dark:text-zinc-500 text-center">
-            Uses the server ScreenshotOne key when configured.
+            Uses the backend browser, or ScreenshotOne when configured.
           </p>
         </div>
       </div>

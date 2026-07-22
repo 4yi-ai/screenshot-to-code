@@ -1,5 +1,4 @@
 import pytest
-from fastapi import HTTPException
 
 from routes import screenshot
 from routes.screenshot import ScreenshotRequest, app_screenshot, normalize_url, resolve_screenshot_api_key
@@ -80,29 +79,25 @@ class TestScreenshotApiKey:
 
         assert resolve_screenshot_api_key(None) == "server-key"
 
-    def test_missing_key_raises_clear_400(self, monkeypatch):
+    def test_missing_key_returns_none_for_local_browser_fallback(self, monkeypatch):
         monkeypatch.delenv("SCREENSHOTONE_API_KEY", raising=False)
         monkeypatch.delenv("SCREENSHOT_ONE_API_KEY", raising=False)
 
-        with pytest.raises(HTTPException) as exc:
-            resolve_screenshot_api_key(None)
-
-        assert exc.value.status_code == 400
-        assert "ScreenshotOne API key is not configured" in str(exc.value.detail)
+        assert resolve_screenshot_api_key(None) is None
 
 
 @pytest.mark.asyncio
-async def test_app_screenshot_uses_backend_key_when_body_key_is_missing(monkeypatch):
+async def test_app_screenshot_uses_screenshotone_when_backend_key_is_configured(monkeypatch):
     captured = {}
 
-    async def fake_capture_screenshot(target_url: str, api_key: str, device: str = "desktop") -> bytes:
+    async def fake_capture_screenshotone(target_url: str, api_key: str, device: str = "desktop") -> bytes:
         captured["target_url"] = target_url
         captured["api_key"] = api_key
         captured["device"] = device
         return b"fake-png"
 
     monkeypatch.setenv("SCREENSHOTONE_API_KEY", "server-key")
-    monkeypatch.setattr(screenshot, "capture_screenshot", fake_capture_screenshot)
+    monkeypatch.setattr(screenshot, "capture_screenshot_with_screenshotone", fake_capture_screenshotone)
 
     response = await app_screenshot(ScreenshotRequest(url="example.com"))
 
@@ -112,3 +107,25 @@ async def test_app_screenshot_uses_backend_key_when_body_key_is_missing(monkeypa
         "device": "desktop",
     }
     assert response.url == "data:image/png;base64,ZmFrZS1wbmc="
+
+
+@pytest.mark.asyncio
+async def test_app_screenshot_uses_local_browser_when_no_key_is_configured(monkeypatch):
+    captured = {}
+
+    async def fake_capture_screenshot_locally(target_url: str, device: str = "desktop") -> bytes:
+        captured["target_url"] = target_url
+        captured["device"] = device
+        return b"local-png"
+
+    monkeypatch.delenv("SCREENSHOTONE_API_KEY", raising=False)
+    monkeypatch.delenv("SCREENSHOT_ONE_API_KEY", raising=False)
+    monkeypatch.setattr(screenshot, "capture_screenshot_locally", fake_capture_screenshot_locally)
+
+    response = await app_screenshot(ScreenshotRequest(url="example.com"))
+
+    assert captured == {
+        "target_url": "https://example.com",
+        "device": "desktop",
+    }
+    assert response.url == "data:image/png;base64,bG9jYWwtcG5n"

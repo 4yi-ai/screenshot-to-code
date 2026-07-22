@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir "poetry==1.8.0"
 COPY backend/pyproject.toml backend/poetry.lock ./
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root
+RUN python -m playwright install --with-deps chromium
 COPY backend/ ./
 COPY --from=frontend /fe/dist ./static
 EXPOSE 8080
