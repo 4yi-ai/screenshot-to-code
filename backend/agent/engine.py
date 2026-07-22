@@ -37,6 +37,7 @@ class AgentEngine:
         asset_base_url: str = "",
         initial_file_state: Optional[Dict[str, str]] = None,
         option_codes: Optional[List[str]] = None,
+        stream_text_as_code: bool = False,
     ):
         self.send_message = send_message
         self.variant_index = variant_index
@@ -47,6 +48,7 @@ class AgentEngine:
         self.replicate_api_key = replicate_api_key
         self.should_generate_images = should_generate_images
         self.should_extract_assets = should_extract_assets
+        self._stream_text_as_code = stream_text_as_code
 
         self.file_state = AgentFileState()
         if initial_file_state and initial_file_state.get("content"):
@@ -182,15 +184,21 @@ class AgentEngine:
             thinking_event_id = self._next_event_id("thinking")
             started_tool_ids: set[str] = set()
             streamed_lengths: Dict[str, int] = {}
+            html_buffer = ""
+            last_code_len = 0
 
             async def on_event(event: StreamEvent) -> None:
                 if event.type == "assistant_delta":
-                    if event.text:
-                        await self._send(
-                            "assistant",
-                            event.text,
-                            event_id=assistant_event_id,
-                        )
+                    if not event.text:
+                        return
+                    if self._stream_text_as_code:
+                        nonlocal html_buffer, last_code_len
+                        html_buffer += event.text
+                        if len(html_buffer) - last_code_len >= 40:
+                            last_code_len = len(html_buffer)
+                            await self._send("setCode", html_buffer)
+                        return
+                    await self._send("assistant", event.text, event_id=assistant_event_id)
                     return
 
                 if event.type == "thinking_delta":

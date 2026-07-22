@@ -634,6 +634,7 @@ class AgenticGenerationStage:
                 asset_base_url=self.asset_base_url,
                 initial_file_state=self.file_state,
                 option_codes=self.option_codes,
+                stream_text_as_code=(model == Llm.GATEWAY),
             )
             completion = await runner.run(model, prompt_messages)
             if completion:
