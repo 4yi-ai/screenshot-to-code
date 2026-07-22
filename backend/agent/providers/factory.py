@@ -7,10 +7,11 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from agent.providers.anthropic import AnthropicProviderSession, serialize_anthropic_tools
 from agent.providers.base import ProviderSession
+from agent.providers.chat_completions import ChatCompletionsProviderSession
 from agent.providers.gemini import GeminiProviderSession, serialize_gemini_tools
 from agent.providers.openai import OpenAIProviderSession, serialize_openai_tools
 from agent.tools import canonical_tool_definitions
-from config import REPLICATE_API_KEY
+from config import OPENAI_API_KEY, OPENAI_BASE_URL, REPLICATE_API_KEY, TEXT_MODEL
 from llm import ANTHROPIC_MODELS, GEMINI_MODELS, OPENAI_MODELS, Llm
 from preview_screenshot import is_screenshot_preview_available
 
@@ -26,6 +27,22 @@ def create_provider_session(
     replicate_api_key: Optional[str],
     should_extract_assets: bool = True,
 ) -> ProviderSession:
+    # 4yi gateway path: route generation through the OpenAI-compatible gateway.
+    # Read base_url/key from config directly so the IS_PROD gate on the
+    # per-request base_url cannot silently send us to api.openai.com.
+    if model == Llm.GATEWAY:
+        api_key = openai_api_key or OPENAI_API_KEY
+        base_url = OPENAI_BASE_URL or openai_base_url
+        if not api_key:
+            raise Exception("Gateway API key (OPENAI_API_KEY) is missing.")
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return ChatCompletionsProviderSession(
+            client=client,
+            model_name=TEXT_MODEL or "",
+            prompt_messages=prompt_messages,
+            tools=[],
+        )
+
     canonical_tools = canonical_tool_definitions(
         image_generation_enabled=should_generate_images,
         # The edit_image tool calls Replicate, so don't offer it without a key.
