@@ -51,7 +51,16 @@ the best results and lets you compare multiple models per generation.
 | `OPENAI_API_KEY` | One of these three | GPT code-gen variants (GPT-5.5, GPT-5.4 Mini) |
 | `ANTHROPIC_API_KEY` | One of these three | Claude code-gen variants (Opus 4.8, Fable 5, Sonnet 4.6) |
 | `GEMINI_API_KEY` | One of these three — **strongly recommended** | Gemini code-gen variants (3 Flash, 3.1 Pro); extracts real assets from the screenshot; required for video mode |
-| `REPLICATE_API_KEY` | **Strongly recommended** | Image editing, background removal, and Replicate-backed image generation — without it, `edit_image` and `remove_background` are unavailable, and image generation falls back to OpenAI if configured |
+| `REPLICATE_API_KEY` | **Strongly recommended** | Image generation, image editing, and background removal — without it, `generate_images`, `edit_image`, and `remove_background` are unavailable |
+| `SCREENSHOTONE_API_KEY` | Optional | Server-side URL screenshot capture when the local Playwright browser cannot run |
+
+For 4YI marketplace packaging, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and
+`TEXT_MODEL` should point at the 4YI OpenAI-compatible gateway. Gateway tool
+calling is enabled by default with `GATEWAY_TOOLS_ENABLED=true`; the gateway
+must pass OpenAI-compatible `tools`/`tool_calls` through to its upstream model
+provider. Replicate, Gemini, and ScreenshotOne should be injected as platform
+secrets so external tool calls run server-side and can be metered by the 4YI
+billing layer.
 
 With more keys, the app automatically picks a stronger mix of models per
 variant; with a single key it uses that provider's models only.

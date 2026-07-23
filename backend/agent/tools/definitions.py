@@ -167,6 +167,7 @@ def _retrieve_option_schema() -> Dict[str, Any]:
 
 def canonical_tool_definitions(
     image_generation_enabled: bool = True,
+    background_removal_enabled: bool = True,
     image_editing_enabled: bool = True,
     asset_extraction_enabled: bool = True,
     screenshot_enabled: bool = True,
@@ -201,8 +202,8 @@ def canonical_tool_definitions(
                 parameters=_image_schema(),
             )
         )
-    tools.extend(
-        [
+    if background_removal_enabled:
+        tools.append(
             CanonicalToolDefinition(
                 name="remove_background",
                 description=(
@@ -212,8 +213,7 @@ def canonical_tool_definitions(
                 ),
                 parameters=_remove_background_schema(),
             ),
-        ]
-    )
+        )
     if image_editing_enabled:
         tools.append(
             CanonicalToolDefinition(

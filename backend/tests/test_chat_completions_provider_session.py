@@ -8,7 +8,9 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
 
+from agent.providers.base import ExecutedToolCall
 from agent.providers.chat_completions import ChatCompletionsProviderSession
+from agent.tools.types import ToolCall, ToolExecutionResult, ToolMultimodalPart
 
 
 def _png_data_url(width: int, height: int) -> str:
@@ -26,33 +28,35 @@ def _data_url_dimensions(data_url: str) -> tuple[int, int]:
 
 
 class _Delta:
-    def __init__(self, content):
+    def __init__(self, content, tool_calls=None):
         self.content = content
+        self.tool_calls = tool_calls
 
 
 class _Choice:
-    def __init__(self, content):
-        self.delta = _Delta(content)
+    def __init__(self, content, tool_calls=None):
+        self.delta = _Delta(content, tool_calls)
 
 
 class _Chunk:
-    def __init__(self, content, empty=False):
-        self.choices = [] if empty else [_Choice(content)]
+    def __init__(self, content, empty=False, tool_calls=None):
+        self.choices = [] if empty else [_Choice(content, tool_calls)]
 
 
 class _Message:
-    def __init__(self, content):
+    def __init__(self, content, tool_calls=None):
         self.content = content
+        self.tool_calls = tool_calls
 
 
 class _ResponseChoice:
-    def __init__(self, content):
-        self.message = _Message(content)
+    def __init__(self, content, tool_calls=None):
+        self.message = _Message(content, tool_calls)
 
 
 class _Response:
-    def __init__(self, content):
-        self.choices = [_ResponseChoice(content)]
+    def __init__(self, content, tool_calls=None):
+        self.choices = [_ResponseChoice(content, tool_calls)]
 
 
 class _Stream:
@@ -81,10 +85,12 @@ class _Completions:
         chunks,
         *,
         fallback_content: str = "",
+        fallback_tool_calls=None,
         fail_stream_once: bool = False,
     ):
         self._chunks = chunks
         self._fallback_content = fallback_content
+        self._fallback_tool_calls = fallback_tool_calls
         self._fail_stream_once = fail_stream_once
         self.kwargs: dict[str, Any] | None = None
         self.calls: list[dict[str, Any]] = []
@@ -93,7 +99,7 @@ class _Completions:
         self.kwargs = kwargs
         self.calls.append(kwargs)
         if kwargs.get("stream") is False:
-            return _Response(self._fallback_content)
+            return _Response(self._fallback_content, self._fallback_tool_calls)
         fail = self._fail_stream_once
         self._fail_stream_once = False
         return _Stream(self._chunks, fail=fail)
@@ -105,11 +111,13 @@ class _Chat:
         chunks,
         *,
         fallback_content: str = "",
+        fallback_tool_calls=None,
         fail_stream_once: bool = False,
     ):
         self.completions = _Completions(
             chunks,
             fallback_content=fallback_content,
+            fallback_tool_calls=fallback_tool_calls,
             fail_stream_once=fail_stream_once,
         )
 
@@ -120,11 +128,13 @@ class _Client:
         chunks,
         *,
         fallback_content: str = "",
+        fallback_tool_calls=None,
         fail_stream_once: bool = False,
     ):
         self.chat = _Chat(
             chunks,
             fallback_content=fallback_content,
+            fallback_tool_calls=fallback_tool_calls,
             fail_stream_once=fail_stream_once,
         )
 
@@ -262,6 +272,175 @@ async def test_retries_non_streaming_when_gateway_stream_closes_early():
     assert turn.assistant_text == fallback_html
     assert events == []
     assert [call["stream"] for call in client.chat.completions.calls] == [True, False]
+
+
+async def test_streams_tool_calls_and_appends_tool_results():
+    chunks = [
+        _Chunk(
+            "",
+            tool_calls=[
+                {
+                    "index": 0,
+                    "id": "call-1",
+                    "function": {
+                        "name": "create_file",
+                        "arguments": '{"path":"index.html","content":"<!DOCTYPE ',
+                    },
+                }
+            ],
+        ),
+        _Chunk(
+            "",
+            tool_calls=[
+                {
+                    "index": 0,
+                    "function": {
+                        "arguments": 'html><html></html>"}',
+                    },
+                }
+            ],
+        ),
+    ]
+    client = _Client(chunks)
+    session = ChatCompletionsProviderSession(
+        client=cast(AsyncOpenAI, client),
+        model_name="m",
+        prompt_messages=[{"role": "user", "content": "u"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_file",
+                    "description": "Create a file.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+    )
+    events = []
+
+    turn = await session.stream_turn(lambda e: events.append(e) or _noop())
+
+    assert len(turn.tool_calls) == 1
+    assert turn.tool_calls[0] == ToolCall(
+        id="call-1",
+        name="create_file",
+        arguments={
+            "path": "index.html",
+            "content": "<!DOCTYPE html><html></html>",
+        },
+    )
+    assert [
+        e.tool_arguments for e in events if e.type == "tool_call_delta"
+    ] == [
+        '{"path":"index.html","content":"<!DOCTYPE ',
+        '{"path":"index.html","content":"<!DOCTYPE html><html></html>"}',
+    ]
+
+    await session.append_tool_results(
+        turn,
+        [
+            ExecutedToolCall(
+                tool_call=turn.tool_calls[0],
+                result=ToolExecutionResult(
+                    ok=True,
+                    result={"content": "created"},
+                    summary={"content": "created"},
+                ),
+            )
+        ],
+    )
+
+    messages = cast(list[dict[str, Any]], session._messages)
+    assert messages[-2]["role"] == "assistant"
+    assert messages[-2]["tool_calls"][0]["id"] == "call-1"
+    assert messages[-1] == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": '{"content": "created"}',
+    }
+
+
+async def test_non_streaming_retry_preserves_tool_calls():
+    client = _Client(
+        [_Chunk("partial")],
+        fallback_tool_calls=[
+            {
+                "id": "call-2",
+                "function": {
+                    "name": "edit_file",
+                    "arguments": '{"old_text":"a","new_text":"b"}',
+                },
+            }
+        ],
+        fail_stream_once=True,
+    )
+    session = ChatCompletionsProviderSession(
+        client=cast(AsyncOpenAI, client),
+        model_name="m",
+        prompt_messages=[{"role": "user", "content": "u"}],
+        tools=[],
+    )
+
+    turn = await session.stream_turn(lambda e: _noop())
+
+    assert turn.tool_calls == [
+        ToolCall(
+            id="call-2",
+            name="edit_file",
+            arguments={"old_text": "a", "new_text": "b"},
+        )
+    ]
+    assert [call["stream"] for call in client.chat.completions.calls] == [True, False]
+
+
+async def test_append_tool_results_adds_multimodal_tool_images():
+    session = ChatCompletionsProviderSession(
+        client=cast(AsyncOpenAI, _Client([])),
+        model_name="m",
+        prompt_messages=[{"role": "user", "content": "u"}],
+        tools=[],
+    )
+    turn = await session.stream_turn(lambda e: _noop())
+    tool_call = ToolCall(id="call-3", name="screenshot_preview", arguments={})
+    turn.tool_calls.append(tool_call)
+    turn.assistant_turn = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call-3",
+                "type": "function",
+                "function": {"name": "screenshot_preview", "arguments": "{}"},
+            }
+        ],
+    }
+
+    await session.append_tool_results(
+        turn,
+        [
+            ExecutedToolCall(
+                tool_call=tool_call,
+                result=ToolExecutionResult(
+                    ok=True,
+                    result={"content": "rendered"},
+                    summary={"content": "rendered"},
+                    multimodal_parts=[
+                        ToolMultimodalPart(
+                            display_name="desktop.png",
+                            mime_type="image/png",
+                            image_url="https://example.com/desktop.png",
+                        )
+                    ],
+                ),
+            )
+        ],
+    )
+
+    messages = cast(list[dict[str, Any]], session._messages)
+    assert messages[-1]["role"] == "user"
+    content = messages[-1]["content"]
+    assert content[1]["image_url"]["url"] == "https://example.com/desktop.png"
 
 
 async def _noop():

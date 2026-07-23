@@ -10,6 +10,15 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 # Model slug sent to the OpenAI-compatible gateway (injected per install).
 TEXT_MODEL = os.environ.get("TEXT_MODEL", None)
+# Enable OpenAI-compatible tool calling through the 4YI gateway. The gateway
+# must map Chat Completions tools to the upstream provider (for Bedrock, this is
+# the Converse toolConfig/toolResult loop).
+GATEWAY_TOOLS_ENABLED = os.environ.get("GATEWAY_TOOLS_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 # Image generation (optional)
 REPLICATE_API_KEY = os.environ.get("REPLICATE_API_KEY", None)

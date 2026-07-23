@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 from config import (
     ANTHROPIC_API_KEY,
+    GATEWAY_TOOLS_ENABLED,
     GEMINI_API_KEY,
     IS_DEBUG_ENABLED,
     IS_PROD,
@@ -349,10 +350,12 @@ class ParameterExtractionStage:
         if not openai_base_url:
             print("Using official OpenAI URL")
 
-        # Feature preferences default to enabled for older clients. The v1 4yi
-        # gateway path is tools-less, so do not advertise image-generation tools
-        # that the model cannot actually call.
-        should_generate_images = False
+        # Feature preferences default to enabled for older clients. Replicate-backed
+        # image tools are advertised only when their API key is present; otherwise
+        # the prompt must not invite tool calls the runtime cannot bill or execute.
+        should_generate_images = bool(
+            params.get("isImageGenerationEnabled", True)
+        ) and bool(replicate_api_key)
         should_extract_assets = bool(params.get("isAssetExtractionEnabled", True))
 
         # Extract and validate generation type
@@ -672,7 +675,7 @@ class AgenticGenerationStage:
                 asset_base_url=self.asset_base_url,
                 initial_file_state=self.file_state,
                 option_codes=self.option_codes,
-                stream_text_as_code=(model == Llm.GATEWAY),
+                stream_text_as_code=(model == Llm.GATEWAY and not GATEWAY_TOOLS_ENABLED),
             )
             completion = await runner.run(model, prompt_messages)
             if completion:

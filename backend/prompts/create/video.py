@@ -56,6 +56,8 @@ def _probe_duration(video_path: str) -> float:
 
 MAX_VIDEO_PROMPT_FRAMES = 20
 DEFAULT_VIDEO_PROMPT_FRAMES = 20
+DEFAULT_SCENE_CHANGE_THRESHOLD = 0.18
+DEFAULT_FRAME_MIN_GAP_SECONDS = 0.35
 
 
 def _frame_times(duration: float, count: int) -> list[float]:
@@ -72,6 +74,135 @@ def _frame_times(duration: float, count: int) -> list[float]:
         start + ((end - start) * index) / (frame_count - 1)
         for index in range(frame_count)
     ]
+
+
+def _video_scene_threshold() -> float:
+    raw_value = os.environ.get(
+        "VIDEO_SCENE_CHANGE_THRESHOLD",
+        str(DEFAULT_SCENE_CHANGE_THRESHOLD),
+    )
+    try:
+        return max(0.0, float(raw_value or DEFAULT_SCENE_CHANGE_THRESHOLD))
+    except ValueError:
+        return DEFAULT_SCENE_CHANGE_THRESHOLD
+
+
+def _video_frame_min_gap_seconds() -> float:
+    raw_value = os.environ.get(
+        "VIDEO_FRAME_MIN_GAP_SECONDS",
+        str(DEFAULT_FRAME_MIN_GAP_SECONDS),
+    )
+    try:
+        return max(0.0, float(raw_value or DEFAULT_FRAME_MIN_GAP_SECONDS))
+    except ValueError:
+        return DEFAULT_FRAME_MIN_GAP_SECONDS
+
+
+def _probe_selected_frame_times(
+    video_path: str,
+    select_expression: str,
+    label: str,
+) -> list[float]:
+    proc = subprocess.run(
+        [
+            _ffmpeg_exe(),
+            "-hide_banner",
+            "-i",
+            video_path,
+            "-vf",
+            f"select={select_expression},showinfo",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=60,
+    )
+    output = (proc.stdout + proc.stderr).decode("utf-8", "replace")
+    if proc.returncode != 0:
+        print(f"[video_prompt] unable to probe {label} frames: {output.strip()}")
+        return []
+
+    times: list[float] = []
+    for match in re.finditer(r"pts_time:([0-9]+(?:\.[0-9]+)?)", output):
+        try:
+            times.append(float(match.group(1)))
+        except ValueError:
+            continue
+    return list(dict.fromkeys(times))
+
+
+def _probe_scene_change_times(video_path: str) -> list[float]:
+    threshold = _video_scene_threshold()
+    if threshold <= 0:
+        return []
+    return _probe_selected_frame_times(
+        video_path,
+        f"gt(scene\\,{threshold:.3f})",
+        "scene-change",
+    )
+
+
+def _probe_keyframe_times(video_path: str) -> list[float]:
+    return _probe_selected_frame_times(
+        video_path,
+        "eq(pict_type\\,I)",
+        "keyframe",
+    )
+
+
+def _clamp_frame_time(time_seconds: float, duration: float) -> float:
+    if not duration or duration <= 0:
+        return max(time_seconds, 0.0)
+    end = max(duration - 0.05, 0.0)
+    return min(max(time_seconds, 0.0), end)
+
+
+def _downsample_times_evenly(times: list[float], count: int) -> list[float]:
+    if len(times) <= count:
+        return times
+    if count <= 1:
+        return [times[len(times) // 2]]
+
+    indexes = [
+        round(index * (len(times) - 1) / (count - 1))
+        for index in range(count)
+    ]
+    return [times[index] for index in dict.fromkeys(indexes)]
+
+
+def _merge_frame_times(
+    duration: float,
+    count: int,
+    scene_times: list[float],
+    keyframe_times: list[float],
+) -> list[float]:
+    frame_count = max(1, min(count, MAX_VIDEO_PROMPT_FRAMES))
+    min_gap = _video_frame_min_gap_seconds()
+
+    candidates: list[tuple[float, int]] = []
+    candidates.extend((time, 0) for time in scene_times)
+    candidates.extend((time, 1) for time in keyframe_times)
+    candidates.extend((time, 2) for time in _frame_times(duration, frame_count))
+    candidates.sort(key=lambda item: item[0])
+
+    clusters: list[list[tuple[float, int]]] = []
+    for time, priority in candidates:
+        normalized_time = _clamp_frame_time(time, duration)
+        if not clusters or normalized_time - clusters[-1][-1][0] > min_gap:
+            clusters.append([(normalized_time, priority)])
+        else:
+            clusters[-1].append((normalized_time, priority))
+
+    selected_times = [
+        min(cluster, key=lambda item: (item[1], item[0]))[0]
+        for cluster in clusters
+    ]
+    selected_times.sort()
+    return _downsample_times_evenly(selected_times, frame_count)
 
 
 def _image_bytes_to_data_url(image_bytes: bytes) -> str:
@@ -192,7 +323,14 @@ def _video_to_frame_data_urls(video_data_url: str) -> list[str]:
         video_file.write(_decode_video_data_url(video_data_url))
         video_file.flush()
         duration = _probe_duration(video_file.name)
-        for time in _frame_times(duration, frame_count):
+        scene_times = _probe_scene_change_times(video_file.name)
+        keyframe_times = _probe_keyframe_times(video_file.name)
+        for time in _merge_frame_times(
+            duration,
+            frame_count,
+            scene_times,
+            keyframe_times,
+        ):
             try:
                 frame = _extract_frame_jpeg(video_file.name, time)
                 frame_urls.append(_image_bytes_to_data_url(frame))

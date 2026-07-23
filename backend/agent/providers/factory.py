@@ -7,11 +7,20 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from agent.providers.anthropic import AnthropicProviderSession, serialize_anthropic_tools
 from agent.providers.base import ProviderSession
-from agent.providers.chat_completions import ChatCompletionsProviderSession
+from agent.providers.chat_completions import (
+    ChatCompletionsProviderSession,
+    serialize_chat_completions_tools,
+)
 from agent.providers.gemini import GeminiProviderSession, serialize_gemini_tools
 from agent.providers.openai import OpenAIProviderSession, serialize_openai_tools
 from agent.tools import canonical_tool_definitions
-from config import OPENAI_API_KEY, OPENAI_BASE_URL, REPLICATE_API_KEY, TEXT_MODEL
+from config import (
+    GATEWAY_TOOLS_ENABLED,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+    REPLICATE_API_KEY,
+    TEXT_MODEL,
+)
 from llm import ANTHROPIC_MODELS, GEMINI_MODELS, OPENAI_MODELS, Llm
 from preview_screenshot import is_screenshot_preview_available
 
@@ -27,6 +36,20 @@ def create_provider_session(
     replicate_api_key: Optional[str],
     should_extract_assets: bool = True,
 ) -> ProviderSession:
+    effective_replicate_api_key = replicate_api_key or REPLICATE_API_KEY
+    canonical_tools = canonical_tool_definitions(
+        # Image generation/editing tools call Replicate, so do not offer them
+        # unless the install supplied a platform or user secret for Replicate.
+        image_generation_enabled=should_generate_images
+        and bool(effective_replicate_api_key),
+        background_removal_enabled=bool(effective_replicate_api_key),
+        image_editing_enabled=bool(effective_replicate_api_key),
+        # The extract_assets tool calls Gemini, so don't offer it without a key.
+        asset_extraction_enabled=should_extract_assets and bool(gemini_api_key),
+        # screenshot_preview needs headless Chromium; skip it if it can't launch.
+        screenshot_enabled=is_screenshot_preview_available(),
+    )
+
     # 4yi gateway path: route generation through the OpenAI-compatible gateway.
     # Read base_url/key from config directly so the IS_PROD gate on the
     # per-request base_url cannot silently send us to api.openai.com.
@@ -44,18 +67,12 @@ def create_provider_session(
             client=client,
             model_name=TEXT_MODEL or "",
             prompt_messages=prompt_messages,
-            tools=[],
+            tools=(
+                serialize_chat_completions_tools(canonical_tools)
+                if GATEWAY_TOOLS_ENABLED
+                else []
+            ),
         )
-
-    canonical_tools = canonical_tool_definitions(
-        image_generation_enabled=should_generate_images,
-        # The edit_image tool calls Replicate, so don't offer it without a key.
-        image_editing_enabled=bool(replicate_api_key or REPLICATE_API_KEY),
-        # The extract_assets tool calls Gemini, so don't offer it without a key.
-        asset_extraction_enabled=should_extract_assets and bool(gemini_api_key),
-        # screenshot_preview needs headless Chromium; skip it if it can't launch.
-        screenshot_enabled=is_screenshot_preview_available(),
-    )
 
     if model in OPENAI_MODELS:
         if not openai_api_key:

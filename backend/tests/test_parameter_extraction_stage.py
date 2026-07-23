@@ -28,7 +28,7 @@ async def test_asset_extraction_preference_defaults_on_and_supports_opt_out(
 
 
 @pytest.mark.asyncio
-async def test_gateway_path_disables_image_generation_tools_in_prompt() -> None:
+async def test_image_generation_prompt_tools_require_replicate_key() -> None:
     stage = ParameterExtractionStage(AsyncMock())
 
     extracted = await stage.extract_and_validate(
@@ -41,6 +41,23 @@ async def test_gateway_path_disables_image_generation_tools_in_prompt() -> None:
     )
 
     assert extracted.should_generate_images is False
+
+
+@pytest.mark.asyncio
+async def test_image_generation_prompt_tools_enable_with_replicate_key() -> None:
+    stage = ParameterExtractionStage(AsyncMock())
+
+    extracted = await stage.extract_and_validate(
+        {
+            "generatedCodeConfig": "html_tailwind",
+            "inputMode": "text",
+            "prompt": {"text": "hello"},
+            "isImageGenerationEnabled": True,
+            "replicateApiKey": "replicate-from-ui",
+        }
+    )
+
+    assert extracted.should_generate_images is True
 
 
 @pytest.mark.asyncio

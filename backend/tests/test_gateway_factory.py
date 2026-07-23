@@ -11,6 +11,9 @@ def test_gateway_model_returns_chat_completions_session(monkeypatch):
     import agent.providers.factory as factory
     monkeypatch.setattr(factory, "TEXT_MODEL", "anthropic.claude-sonnet-4-6", raising=False)
     monkeypatch.setattr(factory, "OPENAI_BASE_URL", "https://gw.test/api/v1", raising=False)
+    monkeypatch.setattr(factory, "GATEWAY_TOOLS_ENABLED", True, raising=False)
+    monkeypatch.setattr(factory, "REPLICATE_API_KEY", None, raising=False)
+    monkeypatch.setattr(factory, "is_screenshot_preview_available", lambda: False)
 
     session = create_provider_session(
         model=Llm.GATEWAY,
@@ -24,7 +27,12 @@ def test_gateway_model_returns_chat_completions_session(monkeypatch):
     )
     assert isinstance(session, ChatCompletionsProviderSession)
     assert session._model_name == "anthropic.claude-sonnet-4-6"
-    assert session._tools == []
+    tool_names = [tool["function"]["name"] for tool in session._tools]
+    assert "create_file" in tool_names
+    assert "edit_file" in tool_names
+    assert "save_assets" in tool_names
+    assert "generate_images" not in tool_names
+    assert "remove_background" not in tool_names
     # base_url falls back to config even when the per-request one is None
     assert str(session._client.base_url).startswith("https://gw.test/api/v1")
 
